@@ -247,7 +247,7 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
     log.info(f"Scraped {len(scraped_data)} tweets total.")
     return scraped_data
 
-def scrape_reddit(search_query: str, subreddit: Optional[str] = None, depth: int = -1, time_budget: int = -1) -> list[ScrapedRedditDict]:
+def scrape_reddit(search_query: str, subreddit: Optional[str] = None, since_date_str: Optional[str] = None, until_date_str: Optional[str] = None, depth: int = -1, time_budget: int = -1) -> list[ScrapedRedditDict]:
     """Scrape Reddit posts via PullPush.
 
     Args:
@@ -264,7 +264,7 @@ def scrape_reddit(search_query: str, subreddit: Optional[str] = None, depth: int
         raise TypeError("depth must be an integer")
     if time_budget != -1 and not isinstance(time_budget, int):
         raise TypeError("time_budget must be an integer")
-
+    
     log.info(f"Scraping Reddit for query: {search_query!r}  subreddit: {subreddit}  depth={depth}  budget={time_budget}s")
 
     scraped_data = []
@@ -285,6 +285,12 @@ def scrape_reddit(search_query: str, subreddit: Optional[str] = None, depth: int
         # Add subreddit filter if provided
         if subreddit:
             params["subreddit"] = [sub.strip() for sub in subreddit.split(",")]
+
+        if since_date_str:
+            params["since"] = datetime.strptime(since_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+        if until_date_str:
+            params["until"] = datetime.strptime(until_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             
         if last_timestamp:
             params["before"] = last_timestamp

@@ -23,7 +23,7 @@ def run_scrape_upload(since: str, until: str) -> int:
         for search in config.scrape_config['nitter']
         if search.get('query')
         for tweet in scrap_nitter(
-            search_query=search['query'],
+            search_query=search['query'] + date_filter,
             depth=search.get('depth') or -1,
             time_budget=search.get('time_budget') or -1
         )
@@ -37,6 +37,8 @@ def run_scrape_upload(since: str, until: str) -> int:
         for comment in scrape_reddit(
             search_query=search['query'],
             subreddit=search.get("subreddit"),
+            since_date_str=since,
+            until_date_str=until,
             depth=search.get('depth') or -1,
             time_budget=search.get('time_budget') or -1
         )
