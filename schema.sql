@@ -2,7 +2,6 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";    -- uuid_generate_v4()
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";     -- gen_random_uuid(), cryptographic helpers
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";      -- GIN trigram index for fuzzy text search
-CREATE EXTENSION IF NOT EXISTS "vector";       -- pgvector: store NLP embeddings (IndoBERT/RoBERTa)
 CREATE EXTENSION IF NOT EXISTS "pg_stat_statements"; -- query performance monitoring
 
 CREATE TABLE IF NOT EXISTS app_config (
@@ -219,11 +218,6 @@ CREATE INDEX idx_fact_post_tier           ON fact_post (engagement_tier);
 -- compound for the four main OLAP queries
 CREATE INDEX idx_fact_post_olap_temporal  ON fact_post (time_id, topic_id, sentiment_id);
 CREATE INDEX idx_fact_post_olap_platform  ON fact_post (platform_id, topic_id, time_id);
-
--- pgvector cosine-similarity search on embeddings
-CREATE INDEX idx_raw_tweets_embedding     ON raw_tweets USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-CREATE INDEX idx_raw_reddit_embedding     ON raw_reddit USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-
 
 -- 5. HELPER FUNCTIONS
 
