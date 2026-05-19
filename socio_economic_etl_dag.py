@@ -111,7 +111,6 @@ with DAG(
         python=VENV_PYTHON,
         python_callable=task_scrape,
         templates_dict={"exec_date": "{{ ds }}"},
-        provide_context=True,
         expect_airflow=False,
     )
 
