@@ -1,45 +1,76 @@
-from datetime import datetime, timezone
+from datetime import datetime, date, timedelta, timezone
 
 import numpy as np
 import pandas as pd
 
 from core import config, supabase, log
 from src.scraper import scrap_nitter, scrape_reddit
-from src.preprocess import processing_text
 from src.upload import upload_raw_tweets, upload_raw_reddit
 
-def run_scrape() -> tuple[list[dict], list[dict]]:
-    new_tweets = [
-        {**tweet, "source_type": "twitter"}
-        for search in config.scrape_config["nitter"]
-        if search.get("query")
-        for tweet in scrap_nitter(
-            search_query=search["query"],
-            depth=search.get("depth") or -1,
-            time_budget=search.get("time_budget") or -1,
-        )
-    ]
+SCRAPE_YEARS = [2023, 2024, 2025, 2026]
+DAG_BASE_DATE = date(2023, 1, 1)
+MANUAL_BASE_DATE = date(2026, 5, 19)
+
+def resolve_scrape_year(exec_date: str | None) -> int:
+    """Map an execution date (or today) to a scrape year.
+
+    Airflow:  exec_date="2023-01-01" → 2023
+              exec_date="2023-01-02" → 2024  ...
+    Manual:   today (2026-05-19)     → 2023
+              tomorrow (2026-05-20)  → 2024  ...
+
+    The index is clamped so it never goes out of range.
+    """
+    if exec_date:
+        d = datetime.strptime(exec_date, "%Y-%m-%d").date()
+        idx = (d - DAG_BASE_DATE).days
+    else:
+        d = datetime.now(timezone.utc).date()
+        idx = (d - MANUAL_BASE_DATE).days
+
+    idx = max(0, min(idx, len(SCRAPE_YEARS) - 1))
+    year = SCRAPE_YEARS[idx]
+    log.info(f"Resolved scrape year: {year}  (slot index={idx}, source={'airflow' if exec_date else 'manual'})")
+    return year
+
+
+def run_scrape_upload(exec_date: str | None = None) -> int:
+    year = resolve_scrape_year(exec_date)
+
+    # Build a full-year date filter — Twitter syntax: since/until
+    since = f"{year}-01-01"
+    until = f"{year + 1}-01-01"
+    date_filter = f" since:{since} until:{until}"
+    log.info(f"Targeting full year window: {since} → {until}")
+
+    new_tweets = []
+    for search in config.scrape_config.get("nitter", []):
+        if search.get("query"):
+            dynamic_query = search["query"] + date_filter
+            new_tweets.extend(
+                scrap_nitter(
+                    search_query=dynamic_query,
+                    depth=search.get("depth") or -1,
+                    time_budget=search.get("time_budget") or -1,
+                )
+            )
     log.info(f"[scrape] tweets found: {len(new_tweets)}")
 
-    new_reddit = [
-        {**post, "source_type": "reddit"}
-        for search in config.scrape_config["reddit"]
-        if search.get("query")
-        for post in scrape_reddit(
-            search_query=search["query"],
-            subreddit=search.get("subreddit"),  # Pass the new config parameter
-            depth=search.get("depth") or -1,
-            time_budget=search.get("time_budget") or -1,
-        )
-    ]
+    new_reddit = []
+    for search in config.scrape_config.get("reddit", []):
+        if search.get("query"):
+            new_reddit.extend(
+                scrape_reddit(
+                    search_query=search["query"],
+                    subreddit=search.get("subreddit"),
+                    depth=search.get("depth") or -1,
+                    time_budget=search.get("time_budget") or -1,
+                )
+            )
     log.info(f"[scrape] reddit posts found: {len(new_reddit)}")
 
-    return new_tweets, new_reddit
-
-
-def run_preprocess_and_upload(new_tweets: list[dict], new_reddit: list[dict]) -> int:
     if not new_tweets and not new_reddit:
-        log.info("Nothing to process — exiting early.")
+        log.info("Nothing to upload — exiting early.")
         return 0
 
     df_tweets = (
@@ -55,17 +86,7 @@ def run_preprocess_and_upload(new_tweets: list[dict], new_reddit: list[dict]) ->
         [d for d in (df_tweets, df_reddit) if not d.empty],
         ignore_index=True,
     )
-    log.info(f"Combined records before filter: {len(full_df)}")
-
-    def _source_text(row):
-        if row.get("source_type") == "reddit":
-            return str(row.get("title") or "") + " " + str(row.get("body") or "")
-        return str(row.get("text_content") or "")
-
-    full_df["processed_text"] = full_df.apply(_source_text, axis=1).apply(processing_text)
-    full_df["processed_text"] = full_df["processed_text"].replace(r"^\s*$", np.nan, regex=True)
-    full_df.dropna(subset=["processed_text"], inplace=True)
-    log.info(f"Records after filter: {len(full_df)}")
+    log.info(f"Total records to upload: {len(full_df)}")
 
     upload_raw_tweets(full_df)
     upload_raw_reddit(full_df)
@@ -80,7 +101,6 @@ if __name__ == "__main__":
         on_conflict="key",
     ).execute()
 
-    tweets, reddit = run_scrape()
-    len_full_df = run_preprocess_and_upload(tweets, reddit)
-
-    log.info(f"Processed {len_full_df} records in {datetime.now(timezone.utc) - utc_now}")
+    # exec_date=None → uses today relative to MANUAL_BASE_DATE
+    total = run_scrape_upload(exec_date=None)
+    log.info(f"Uploaded {total} raw records in {datetime.now(timezone.utc) - utc_now}")

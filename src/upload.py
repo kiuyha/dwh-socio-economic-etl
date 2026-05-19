@@ -40,7 +40,6 @@ _REDDIT_INT_COLS = ["score", "upvote_count", "downvote_count", "comment_count"]
 
 
 def _coerce_int_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    """Fill NaN with 0 and cast to int for NOT NULL INTEGER columns."""
     for col in cols:
         if col in df.columns:
             df[col] = df[col].fillna(0).astype(int)
@@ -48,7 +47,6 @@ def _coerce_int_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 
 
 def _prepare(df: pd.DataFrame, allowed_cols: list[str], int_cols: list[str]) -> list[dict]:
-    """Whitelist columns, coerce types, and convert to records."""
     if "scraped_at" not in df.columns:
         df = df.copy()
         df["scraped_at"] = datetime.now(timezone.utc).isoformat()
@@ -63,9 +61,7 @@ def _prepare(df: pd.DataFrame, allowed_cols: list[str], int_cols: list[str]) -> 
         .to_dict(orient="records")
     )
 
-
 def upload_raw_tweets(df: pd.DataFrame) -> None:
-    """Upload Twitter records to raw_tweets."""
     source_df = cast(pd.DataFrame, df[df["source_type"] == "twitter"].copy())
 
     if source_df.empty:
@@ -79,13 +75,7 @@ def upload_raw_tweets(df: pd.DataFrame) -> None:
 
 
 def upload_raw_reddit(df: pd.DataFrame) -> None:
-    """Upload Reddit records to raw_reddit.
-
-    text_content is excluded because it is a GENERATED ALWAYS column
-    (COALESCE(title,'') || ' ' || COALESCE(body,'')).
-    The scraper must supply title and/or body instead.
-    """
-    source_df = cast(pd.DataFrame, df[df["source_type"] == "twitter"].copy())
+    source_df = cast(pd.DataFrame, df[df["source_type"] == "reddit"].copy())
 
     if source_df.empty:
         log.info("No reddit records to upload. Skipping.")
