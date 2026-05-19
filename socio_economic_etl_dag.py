@@ -97,9 +97,8 @@ with DAG(
     default_args=default_args,
     description="ETL pipeline for socioeconomic data - one run per scrape year",
     schedule="0 1 * * *",
-    start_date=datetime(2023, 1, 1),
-    end_date=datetime(2023, 1, 4),
-    catchup=True,
+    start_date=datetime(2026, 5, 19),  # Today's date
+    catchup=False,
     max_active_runs=2,
     tags=["socioeconomic", "scrape", "etl", "raw-staging"],
 ) as dag:
