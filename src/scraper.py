@@ -5,10 +5,9 @@ import random
 from datetime import datetime, timezone
 from urllib.parse import quote_plus
 import requests
-from ..core import log, supabase
+from core import log, supabase
 from typing import Tuple, Optional
 from src.utils.types import ScrapedTweetDict, ScrapedRedditDict
-
 
 def safetly_extract_text(element, xpath: str, attribute: Optional[str] = None) -> Optional[str]:
     try:

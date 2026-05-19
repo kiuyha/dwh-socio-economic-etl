@@ -1,15 +1,10 @@
-"""
-upload.py — schema-aligned upload helpers for the raw staging layer.
-
-Imported by main.py; never run directly.
-"""
-
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 
 from core import log, supabase
+from typing import cast
 
 _TWEET_COLUMNS = [
     "id",
@@ -59,7 +54,7 @@ def _prepare(df: pd.DataFrame, allowed_cols: list[str], int_cols: list[str]) -> 
         df["scraped_at"] = datetime.now(timezone.utc).isoformat()
 
     cols_present = [c for c in allowed_cols if c in df.columns]
-    df = df[cols_present].copy()
+    df = cast(pd.DataFrame, df[cols_present].copy())
     df = _coerce_int_cols(df, int_cols)
 
     return (
@@ -71,7 +66,7 @@ def _prepare(df: pd.DataFrame, allowed_cols: list[str], int_cols: list[str]) -> 
 
 def upload_raw_tweets(df: pd.DataFrame) -> None:
     """Upload Twitter records to raw_tweets."""
-    source_df = df[df["source_type"] == "twitter"].copy()
+    source_df = cast(pd.DataFrame, df[df["source_type"] == "twitter"].copy())
 
     if source_df.empty:
         log.info("No twitter records to upload. Skipping.")
@@ -90,7 +85,7 @@ def upload_raw_reddit(df: pd.DataFrame) -> None:
     (COALESCE(title,'') || ' ' || COALESCE(body,'')).
     The scraper must supply title and/or body instead.
     """
-    source_df = df[df["source_type"] == "reddit"].copy()
+    source_df = cast(pd.DataFrame, df[df["source_type"] == "twitter"].copy())
 
     if source_df.empty:
         log.info("No reddit records to upload. Skipping.")
