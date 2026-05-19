@@ -287,10 +287,12 @@ def scrape_reddit(search_query: str, subreddit: Optional[str] = None, since_date
             params["subreddit"] = [sub.strip() for sub in subreddit.split(",")]
 
         if since_date_str:
-            params["since"] = datetime.strptime(since_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            dt_since = datetime.strptime(since_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            params["after"] = int(dt_since.timestamp())
 
         if until_date_str:
-            params["until"] = datetime.strptime(until_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            dt_until = datetime.strptime(until_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            params["before"] = int(dt_until.timestamp())
             
         if last_timestamp:
             params["before"] = last_timestamp
