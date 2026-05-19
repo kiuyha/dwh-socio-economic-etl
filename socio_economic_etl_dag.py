@@ -63,17 +63,15 @@ def task_scrape(**kwargs):
     SCRAPE_YEARS = [2026, 2025, 2024, 2023]
     DAG_BASE_DATE = date(2023, 1, 1)
 
-    # 1. Safely check if this is an explicit manual trigger via UI Configuration JSON
-    dag_run = kwargs.get("dag_run")
-    conf = getattr(dag_run, "conf", {}) or {}
+    templates = kwargs.get("templates_dict") or {}
+    manual_year_str = templates.get("manual_year")
+    ds = templates.get("exec_date")
     
-    if conf and "year" in conf:
-        year = int(conf["year"])
+    if manual_year_str and manual_year_str.strip():
+        year = int(manual_year_str)
         log.info(f"[scrape] Manual Execution via UI Configuration - Explicitly requested year={year}")
         
-    # 2. Fall back to automatic scheduled backfill date tracking
     else:
-        ds = (kwargs.get("templates_dict") or {}).get("exec_date")
         d = date.fromisoformat(ds) if ds else DAG_BASE_DATE
         
         idx = (d - DAG_BASE_DATE).days
@@ -110,7 +108,10 @@ with DAG(
         task_id="scrape",
         python=VENV_PYTHON,
         python_callable=task_scrape,
-        templates_dict={"exec_date": "{{ ds }}"},
+        templates_dict={
+            "exec_date": "{{ ds }}",
+            "manual_year": "{{ dag_run.conf.get('year', '') if dag_run and dag_run.conf else '' }}"
+        },
         expect_airflow=False,
     )
 
