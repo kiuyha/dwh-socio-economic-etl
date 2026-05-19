@@ -38,7 +38,22 @@ default_args = {
     "retries": 3,
     "retry_delay": timedelta(minutes=5),
 }
-def task_scrape(exec_date: str):
+
+def task_scrape(**kwargs):
+    # Retrieve templated values
+    templates_dict = kwargs.get("templates_dict", {})
+    exec_date_str = templates_dict.get("exec_date")
+    
+    # Check for manual override in dag_run configuration
+    dag_run = kwargs.get("dag_run")
+    manual_year = dag_run.conf.get("year") if dag_run and dag_run.conf else None
+    
+    # Determine the execution date to use
+    if manual_year:
+        exec_date = f"{manual_year}-01-01"
+    else:
+        exec_date = exec_date_str
+
     import sys
     from pathlib import Path
     from datetime import datetime, timezone
@@ -66,21 +81,18 @@ def task_scrape(exec_date: str):
         on_conflict="key",
     ).execute()
 
-    # exec_date drives the year slot (see resolve_scrape_year in main.py)
     total = run_scrape_upload(exec_date=exec_date)
-
     log.info(f"[scrape] finished {total} records for exec_date={exec_date}")
-
 
 with DAG(
     dag_id="socioeconomic_etl_pipeline",
     default_args=default_args,
-    description="Yearly scrape ETL — one Airflow day = one full calendar year (2023-2026)",
-    schedule="0 1 * * *",          # still daily, but only 4 runs total
+    description="ETL pipeline for socioeconomic data",
+    schedule="0 1 * * *",
     start_date=datetime(2023, 1, 1),
-    end_date=datetime(2023, 1, 4),  # inclusive; 4 runs
-    catchup=True,                   # backfill all 4 slots
-    max_active_runs=2,              # run at most 2 years concurrently
+    end_date=datetime(2023, 1, 4),
+    catchup=True,
+    max_active_runs=2,
     tags=["socioeconomic", "scrape", "etl", "raw-staging"],
 ) as dag:
 
@@ -88,7 +100,8 @@ with DAG(
         task_id="scrape",
         python=VENV_PYTHON,
         python_callable=task_scrape,
-        op_kwargs={"exec_date": "{{ ds }}"},
+        templates_dict={"exec_date": "{{ ds }}"},
+        provide_context=True,
         expect_airflow=False,
     )
 
