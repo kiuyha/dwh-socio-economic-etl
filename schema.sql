@@ -520,3 +520,9 @@ CREATE POLICY dim_platform_service_write  ON dim_platform    FOR ALL USING (auth
 CREATE POLICY dim_topic_service_write     ON dim_topic       FOR ALL USING (auth.role() = 'service_role');
 CREATE POLICY dim_sentiment_service_write ON dim_sentiment   FOR ALL USING (auth.role() = 'service_role');
 CREATE POLICY fact_post_service_write     ON fact_post       FOR ALL USING (auth.role() = 'service_role');
+
+ALTER TABLE raw_tweets ADD COLUMN IF NOT EXISTS clean_text TEXT;
+ALTER TABLE raw_reddit ADD COLUMN IF NOT EXISTS clean_text TEXT;
+
+ALTER TABLE raw_tweets DROP COLUMN IF EXISTS embedding;
+ALTER TABLE raw_reddit DROP COLUMN IF EXISTS embedding;
