@@ -11,6 +11,7 @@ class APIResponse:
     status: int = 200
     # Raw requests.Response for edge cases
     _raw: Any = field(default=None, repr=False)
+    single: bool = False
 
     def __bool__(self) -> bool:
         return bool(self.data)
@@ -51,6 +52,15 @@ class QueryBuilder:
         """
         self._select_cols = ", ".join(columns)
         self._method = "GET"
+        return self
+    
+    def delete(self) -> "QueryBuilder":
+        """
+        DELETE row(s) based on filters.
+        Note: PostgREST requires at least one filter (e.g., .eq()) 
+        to perform a DELETE request on most configurations.
+        """
+        self._method = "DELETE"
         return self
 
     def eq(self, column: str, value: Any) -> "QueryBuilder":
@@ -161,9 +171,9 @@ class QueryBuilder:
         headers = self._client.headers.copy()
         params: dict[str, Any] = {}
 
-        if self._method == "GET":
+        if self._method in ("GET", "DELETE"):
             # --- columns / joins ---
-            if self._select_cols:
+            if self._select_cols and self._method == "GET":
                 params["select"] = self._select_cols
 
             # --- filters ---
@@ -171,14 +181,14 @@ class QueryBuilder:
                 params[col] = expression
 
             # --- ordering ---
-            if self._order_col:
+            if self._order_col and self._method == "GET":
                 direction = "desc" if self._order_desc else "asc"
                 params["order"] = f"{self._order_col}.{direction}"
 
             # --- pagination ---
-            if self._limit_val is not None:
+            if self._limit_val is not None and self._method == "GET":
                 params["limit"] = self._limit_val
-            if self._offset_val is not None:
+            if self._offset_val is not None and self._method == "GET":
                 params["offset"] = self._offset_val
 
             if self._single:
@@ -187,7 +197,11 @@ class QueryBuilder:
             # Request an exact count alongside the data
             headers["Prefer"] = "count=exact"
 
-            raw = requests.get(url, headers=headers, params=params)
+            if self._method == "DELETE":
+                headers["Prefer"] = "return=representation"
+                raw = requests.delete(url, headers=headers, params=params)
+            else:
+                raw = requests.get(url, headers=headers, params=params)
 
         else:  # POST (insert / upsert)
             if self._upsert:

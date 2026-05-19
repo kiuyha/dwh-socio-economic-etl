@@ -26,13 +26,21 @@ class ScrapedRedditDict(TypedDict):
     """A dictionary representing a single reddit post."""
     id: str
     username: Optional[str]
-    title: Optional[str]
-    body: Optional[str]
+    text_content: str
     subreddit: Optional[str]
     posted_at: str
     score: int
     upvote_count: int
     downvote_count: int
-    upvote_ratio: Optional[float]
-    comment_count: int
     permalink: Optional[str]
+
+class SentimentDict(TypedDict):
+    """A dictionary representing a single sentiment."""
+    label: str
+    confidence: float
+
+class TopicDict(TypedDict):
+    """A dictionary representing a single topic."""
+    label: str
+    category: str
+    top_keywords: list[str]

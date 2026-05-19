@@ -23,7 +23,6 @@ CREATE TABLE IF NOT EXISTS raw_tweets (
     fullname        TEXT,
     username        TEXT,
     text_content    TEXT,
-    embedding       vector(768),                        -- IndoBERT/RoBERTa embedding
     posted_at       TIMESTAMPTZ     NOT NULL,
     like_count      INTEGER         NOT NULL DEFAULT 0,
     comment_count   INTEGER         NOT NULL DEFAULT 0,
@@ -57,20 +56,12 @@ CREATE TABLE raw_tweets_default  PARTITION OF raw_tweets DEFAULT;  -- safety net
 CREATE TABLE IF NOT EXISTS raw_reddit (
     id              TEXT            NOT NULL,
     username        TEXT,
-    title           TEXT,
-    body            TEXT,
-    -- combined title + body stored pre-normalised for NLP
-    text_content    TEXT GENERATED ALWAYS AS (
-                        COALESCE(title, '') || ' ' || COALESCE(body, '')
-                    ) STORED,
-    embedding       vector(768),
+    text_content    TEXT ,
     subreddit       TEXT,
     posted_at       TIMESTAMPTZ     NOT NULL,
     score           INTEGER         NOT NULL DEFAULT 0,
     upvote_count    INTEGER         NOT NULL DEFAULT 0,
     downvote_count  INTEGER         NOT NULL DEFAULT 0,
-    upvote_ratio    NUMERIC(4, 3),
-    comment_count   INTEGER         NOT NULL DEFAULT 0,
     permalink       TEXT,
     scraped_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     is_processed    BOOLEAN         NOT NULL DEFAULT FALSE,
@@ -265,7 +256,7 @@ END;
 $$;
 
 -- Seed the full project range (call once after applying migrations)
--- SELECT populate_dim_time('2023-01-01', '2026-12-31');
+SELECT populate_dim_time('2023-01-01', '2026-12-31');
 
 -- 5b. Resolve sentiment_id from model outputs
 CREATE OR REPLACE FUNCTION get_sentiment_id(
@@ -457,9 +448,9 @@ BEGIN
             jsonb_build_object(
                 'username',      rr.username,
                 'subreddit',     rr.subreddit,
+                'upvote_count',  rr.upvote_count,
+                'downvote_count',rr.downvote_count,
                 'score',         rr.score,
-                'upvote_ratio',  rr.upvote_ratio,
-                'comment_count', rr.comment_count,
                 'permalink',     rr.permalink
             )
         FROM raw_reddit rr
@@ -521,8 +512,36 @@ CREATE POLICY dim_topic_service_write     ON dim_topic       FOR ALL USING (auth
 CREATE POLICY dim_sentiment_service_write ON dim_sentiment   FOR ALL USING (auth.role() = 'service_role');
 CREATE POLICY fact_post_service_write     ON fact_post       FOR ALL USING (auth.role() = 'service_role');
 
-ALTER TABLE raw_tweets ADD COLUMN IF NOT EXISTS clean_text TEXT;
-ALTER TABLE raw_reddit ADD COLUMN IF NOT EXISTS clean_text TEXT;
 
-ALTER TABLE raw_tweets DROP COLUMN IF EXISTS embedding;
-ALTER TABLE raw_reddit DROP COLUMN IF EXISTS embedding;
+-- 
+-- 9. STAGING TABLES
+--
+
+-- 9a. Staging table for the Transform stage
+--     Called by Airflow transform task for each platform.
+
+CREATE TABLE IF NOT EXISTS staging_transformed (
+    id              TEXT PRIMARY KEY,
+    source_type     TEXT,
+    text_content    TEXT,
+    posted_at       TIMESTAMPTZ,
+    sentiment_label TEXT,
+    sentiment_score NUMERIC(6, 5),
+    topic_label     TEXT,
+    topic_category  TEXT,
+    -- Metrics & Metadata
+    comment_count   INTEGER DEFAULT 0,
+    like_count      INTEGER DEFAULT 0,    -- X metric
+    retweet_count   INTEGER DEFAULT 0,    -- X metric
+    quote_count     INTEGER DEFAULT 0,    -- X metric
+    subreddit       TEXT,                 -- Reddit metric
+    username        TEXT,
+    score           INTEGER DEFAULT 0,    -- Reddit metric
+    upvote_count    INTEGER DEFAULT 0,    -- Reddit metric
+    downvote_count  INTEGER DEFAULT 0,    -- Reddit metric
+    permalink       TEXT,                 -- Reddit metric
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE staging_transformed    ENABLE ROW LEVEL SECURITY;
+CREATE POLICY staging_transformed_service_only ON staging_transformed
+    USING (auth.role() = 'service_role');

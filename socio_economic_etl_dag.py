@@ -1,8 +1,9 @@
 import sys
 from pathlib import Path
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.standard.operators.python import ExternalPythonOperator
+from airflow.operators.python import BranchPythonOperator
 
 _FALLBACK_PATHS = [
     "/home/inter24/dags/dwh-socio-economic-etl",
@@ -91,6 +92,70 @@ def task_scrape(**kwargs):
     total = run_scrape_upload(since=since, until=until)
     log.info(f"[scrape] finished {total} records - year={year} ({since} -> {until})")
 
+def task_transform(**kwargs):
+    import sys
+    from pathlib import Path
+
+    candidates = [
+        "/home/inter24/dags/dwh-socio-economic-etl",
+        "/opt/airflow/dags/dwh-socio-economic-etl",
+    ]
+    try:
+        candidates.insert(0, str(Path(__file__).resolve().parent / "dwh-socio-economic-etl"))
+    except Exception:
+        pass
+
+    root = next((p for p in candidates if p and (Path(p) / "src").exists()), candidates[0])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+    from main import run_transform
+    from core import log
+
+    log.info("[transform] Starting Twitter transformation")
+    run_transform(platform="twitter")
+
+    log.info("[transform] Starting Reddit transformation")
+    run_transform(platform="reddit")
+
+    log.info("[transform] Transformation pipeline finished")
+
+def task_load(**kwargs):
+    import sys
+    from pathlib import Path
+
+    candidates = [
+        "/home/inter24/dags/dwh-socio-economic-etl",
+        "/opt/airflow/dags/dwh-socio-economic-etl",
+    ]
+    try:
+        candidates.insert(0, str(Path(__file__).resolve().parent / "dwh-socio-economic-etl"))
+    except Exception:
+        pass
+
+    root = next((p for p in candidates if p and (Path(p) / "src").exists()), candidates[0])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+    from main import run_load
+    from core import log
+
+    log.info("[load] Starting Twitter load to OLAP Schema")
+    run_load(platform="twitter")
+
+    log.info("[load] Starting Reddit load to OLAP Schema")
+    run_load(platform="reddit")
+
+    log.info("[load] Load pipeline finished")
+    
+
+def decide_branch(**kwargs):
+    templates = kwargs.get("templates_dict") or {}
+    val = templates.get("skip_scrape")
+    
+    if val is True or str(val).lower() == 'true':
+        return 'transform'
+    return 'scrape'
 
 with DAG(
     dag_id="socioeconomic_etl_pipeline",
@@ -102,8 +167,15 @@ with DAG(
     max_active_runs=2,
     tags=["socioeconomic", "scrape", "etl", "raw-staging"],
 ) as dag:
+    branch_task = BranchPythonOperator(
+        task_id="decide_branch",
+        templates_dict={
+            "skip_scrape": "{{ dag_run.conf.get('skip_scrape', False) }}"
+        },
+        python_callable=decide_branch,
+    )
 
-    t1 = ExternalPythonOperator(
+    t_scrape = ExternalPythonOperator(
         task_id="scrape",
         python=VENV_PYTHON,
         python_callable=task_scrape,
@@ -114,4 +186,21 @@ with DAG(
         expect_airflow=False,
     )
 
-    t1
+    t_transform = ExternalPythonOperator(
+        task_id="transform",
+        python=VENV_PYTHON,
+        python_callable=task_transform, 
+        expect_airflow=False,
+        trigger_rule='none_failed_min_one_success'
+    )
+
+    t_load = ExternalPythonOperator(
+        task_id="load",
+        python=VENV_PYTHON,
+        python_callable=task_load,
+        expect_airflow=False,
+    )
+
+    # Set the pipeline flow
+    branch_task >> [t_scrape, t_transform]
+    t_scrape >> t_transform >> t_load

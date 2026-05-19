@@ -20,7 +20,7 @@ def safetly_extract_text(element, xpath: str, attribute: Optional[str] = None) -
         return None
 
 
-def exctract_id_tweet(tweet) -> Optional[str]:
+def extract_id_tweet(tweet) -> Optional[str]:
     tweet_link = safetly_extract_text(tweet, './/a[contains(@class, "tweet-link")]', attribute='href')
     if not tweet_link:
         return None
@@ -44,7 +44,7 @@ def extract_new_tweets_and_next_link(html_content: str) -> Tuple[list[ScrapedTwe
 
     scraped_tweets: list[ScrapedTweetDict] = []
     for tweet in list_tweets:
-        tweet_id = exctract_id_tweet(tweet)
+        tweet_id = extract_id_tweet(tweet)
         posted_at_dt = get_posted_at(tweet)
         
         if not tweet_id or not posted_at_dt:
@@ -78,15 +78,12 @@ def extract_new_reddit_posts(posts: list) -> list[ScrapedRedditDict]:
         {
             "id":            p.get("id"),
             "username":      p.get("author", ""),
-            "title":         p.get("title") or None,
-            "body":          p.get("selftext") or p.get("body") or None,
+            "text_content":  p.get("selftext") or p.get("body") or "",
             "subreddit":     p.get("subreddit") or None,
             "posted_at":     datetime.fromtimestamp(int(p["created_utc"]), tz=timezone.utc).isoformat(),
             "score":         p.get("score", 0),
             "upvote_count":  p.get("ups", 0),
             "downvote_count": p.get("downs", 0),
-            "upvote_ratio":  p.get("upvote_ratio") or None,
-            "comment_count": p.get("num_comments", 0),
             "permalink":     f"{base_url}{p['permalink']}" if p.get("permalink") else None,
         }
         for p in posts

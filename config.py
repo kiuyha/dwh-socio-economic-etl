@@ -13,10 +13,6 @@ class Config:
         self._scrape_config = None
         self._unnecessary_hashtags = None
         self._slang_mapping = None
-        self._curse_words = None
-        self._loc_abbr = None
-        self._per_abbr = None
-        self._org_abbr = None
 
     def _get_app_config(self, key: str, default_value: Any = None):
         """

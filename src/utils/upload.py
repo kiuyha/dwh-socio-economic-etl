@@ -22,21 +22,18 @@ _TWEET_COLUMNS = [
 _REDDIT_COLUMNS = [
     "id",
     "username",
-    "title",
-    "body",
+    "text_content",
     "subreddit",
     "posted_at",
     "score",
     "upvote_count",
     "downvote_count",
-    "upvote_ratio",
-    "comment_count",
     "permalink",
     "scraped_at",
 ]
 
 _TWEET_INT_COLS  = ["like_count", "comment_count", "retweet_count", "quote_count"]
-_REDDIT_INT_COLS = ["score", "upvote_count", "downvote_count", "comment_count"]
+_REDDIT_INT_COLS = ["score", "upvote_count", "downvote_count"]
 
 
 def _coerce_int_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
