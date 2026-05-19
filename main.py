@@ -17,29 +17,31 @@ def run_scrape_upload(since: str, until: str) -> int:
     date_filter = f" since:{since} until:{until}"
     log.info(f"Targeting window: {since} → {until}")
 
-    new_tweets = []
-    for search in config.scrape_config.get("nitter", []):
-        if search.get("query"):
-            new_tweets.extend(
-                scrap_nitter(
-                    search_query=search["query"] + date_filter,
-                    depth=search.get("depth") or -1,
-                    time_budget=search.get("time_budget") or -1,
-                )
-            )
+    new_tweets = [
+        {**tweet, 'source_type': 'twitter'}
+        
+        for search in config.scrape_config['nitter']
+        if search.get('query')
+        for tweet in scrap_nitter(
+            search_query=search['query'],
+            depth=search.get('depth') or -1,
+            time_budget=search.get('time_budget') or -1
+        )
+    ]
     log.info(f"[scrape] tweets found: {len(new_tweets)}")
 
-    new_reddit = []
-    for search in config.scrape_config.get("reddit", []):
-        if search.get("query"):
-            new_reddit.extend(
-                scrape_reddit(
-                    search_query=search["query"],
-                    subreddit=search.get("subreddit"),
-                    depth=search.get("depth") or -1,
-                    time_budget=search.get("time_budget") or -1,
-                )
-            )
+    new_reddit = [
+        {**comment, 'source_type': 'reddit'}
+        for search in config.scrape_config['reddit']
+        if search.get('query')
+        for comment in scrape_reddit(
+            search_query=search['query'],
+            subreddit=search.get("subreddit"),
+            depth=search.get('depth') or -1,
+            time_budget=search.get('time_budget') or -1
+        )
+    ]
+    
     log.info(f"[scrape] reddit posts found: {len(new_reddit)}")
 
     if not new_tweets and not new_reddit:
