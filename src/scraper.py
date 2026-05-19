@@ -96,13 +96,6 @@ def extract_new_reddit_posts(posts: list) -> list[ScrapedRedditDict]:
     return scraped_posts
 
 def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> list[ScrapedTweetDict]:
-    """Scrape tweets from Twitter/X via Nitter.
-
-    Args:
-        search_query: The query to search for.
-        depth: Max number of pages to fetch (-1 for unlimited).
-        time_budget: Max seconds to run (-1 for unlimited).
-    """
     if search_query is None:
         raise ValueError("search_query cannot be None")
     if not isinstance(search_query, str):
@@ -113,7 +106,6 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
         raise TypeError("time_budget must be an integer")
 
     log.info(f"Scraping tweets for query: {search_query!r}  depth={depth}  budget={time_budget}s")
-
     headers = {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.5',
@@ -125,28 +117,33 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
     start_time = time.time()
     index = 1
 
-    # Fetch and parse the proxy list
     raw_proxies = env.get("WEBSHARE_PROXIES", "")
-
     proxy_list = [p.strip() for p in raw_proxies.split(",") if p.strip()]
     if not proxy_list:
         log.warning("No proxies found in WEBSHARE_PROXIES env var. Running without proxy.")
         proxy_list = [None]
     else:
+        # Fix: ensure every proxy has an http:// scheme so httpx actually uses them
+        proxy_list = [
+            p if p.startswith("http://") or p.startswith("https://") else f"http://{p}"
+            for p in proxy_list
+        ]
         safe_proxies = [p.split('@')[-1] for p in proxy_list]
         log.info(f"Successfully loaded {len(proxy_list)} proxies from environment: {safe_proxies}")
         random.shuffle(proxy_list)
 
-    # Create a continuous round-robin cycle
+    def get_display(proxy):
+        if proxy is None:
+            return "Local_IP"
+        return proxy.split('@')[-1]
+
     proxy_cycle = itertools.cycle(proxy_list)
     current_proxy = next(proxy_cycle)
-    
-    # Set max retries to the exact number of available proxies
+    display_proxy = get_display(current_proxy)
+
     max_retries = len(proxy_list)
     retries = 0
-
     client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
-    display_proxy = current_proxy.split('@')[-1] if current_proxy else "Local_IP"
 
     try:
         while True:
@@ -168,10 +165,9 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
                     new_tweets, next_link = extract_new_tweets_and_next_link(response.text)
                     scraped_data.extend(new_tweets)
                     log.info(f"page={index}  new={len(new_tweets)}  next={next_link}")
-                    
                     time.sleep(random.uniform(2, 5))
                     index += 1
-                    retries = 0 
+                    retries = 0
 
                 elif status_code == 200:
                     log.info(f"Empty response on page {index}. Stopping.")
@@ -180,14 +176,54 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
                 elif status_code in (429, 403):
                     log.warning(f"Blocked or Rate Limited ({status_code}), current proxy: {display_proxy}. Rotating to next proxy in cycle...")
                     retries += 1
-                    if retries >= max_retries:
-                        log.error("Exhausted all available proxies. Stopping.")
+
+                    if retries < max_retries:
+                        # Still have proxies to try — rotate and continue
+                        client.close()
+                        current_proxy = next(proxy_cycle)
+                        display_proxy = get_display(current_proxy)
+                        client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
+                        time.sleep(2)
+
+                    elif status_code == 429:
+                        # All proxies exhausted — last resort: honour Retry-After header
+                        log.warning(f"All {max_retries} proxies exhausted. Checking Retry-After header as last resort...")
+                        log.warning(f"Hit rate limit (429). Headers: {response.headers}")
+                        wait_seconds = None
+
+                        if 'retry-after' in response.headers:
+                            retry_value = response.headers['retry-after']
+                            if retry_value.isdigit():
+                                wait_seconds = int(retry_value)
+                            else:
+                                try:
+                                    retry_date = datetime.strptime(retry_value, "%a, %d %b %Y %H:%M:%S %Z").replace(tzinfo=timezone.utc)
+                                    now = datetime.now(timezone.utc)
+                                    wait_seconds = (retry_date - now).total_seconds()
+                                except ValueError:
+                                    log.error(f"Could not parse 'Retry-After' date: {retry_value}")
+                                    break
+
+                        if wait_seconds is None or wait_seconds < 0:
+                            log.warning("No valid 'Retry-After' header found. Stopping.")
+                            break
+
+                        remaining_time = (time_budget - (time.time() - start_time)) if time_budget != -1 else float('inf')
+                        if wait_seconds > remaining_time:
+                            log.warning(
+                                f"Wait time ({wait_seconds}s) exceeds remaining budget ({remaining_time:.0f}s). Stopping."
+                            )
+                            break
+
+                        log.info(f"Waiting {wait_seconds:.2f}s as instructed by server, then resuming...")
+                        time.sleep(wait_seconds)
+                        # Reset retries so proxies get another round after the wait
+                        retries = 0
+
+                    else:
+                        # 403 with all proxies exhausted — nothing more to try
+                        log.error("Exhausted all available proxies on a 403. Stopping.")
                         break
-                    
-                    client.close()
-                    current_proxy = next(proxy_cycle)
-                    client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
-                    time.sleep(2)
 
                 else:
                     log.info(f"Unexpected status {status_code}. Stopping.")
@@ -199,11 +235,12 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
                 if retries >= max_retries:
                     log.error("Exhausted all available proxies. Stopping.")
                     break
-                
                 client.close()
                 current_proxy = next(proxy_cycle)
+                display_proxy = get_display(current_proxy)
                 client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
                 time.sleep(2)
+
     finally:
         client.close()
 
