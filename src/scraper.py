@@ -8,6 +8,7 @@ import requests
 from core import log, env
 from typing import Tuple, Optional
 from src.utils.types import ScrapedTweetDict, ScrapedRedditDict
+import itertools
 
 def safetly_extract_text(element, xpath: str, attribute: Optional[str] = None) -> Optional[str]:
     try:
@@ -94,14 +95,6 @@ def extract_new_reddit_posts(posts: list) -> list[ScrapedRedditDict]:
 
     return scraped_posts
 
-
-import os
-import time
-import random
-from datetime import datetime, timezone
-from urllib.parse import quote_plus
-import httpx
-
 def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> list[ScrapedTweetDict]:
     """Scrape tweets from Twitter/X via Nitter.
 
@@ -132,20 +125,26 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
     start_time = time.time()
     index = 1
 
-    # Fetch and parse the proxy list from the environment
+    # Fetch and parse the proxy list
     raw_proxies = env.get("WEBSHARE_PROXIES", "")
-    if not raw_proxies:
+
+    proxy_list = [p.strip() for p in raw_proxies.split(",") if p.strip()]
+    if not proxy_list:
         log.warning("No proxies found in WEBSHARE_PROXIES env var. Running without proxy.")
         proxy_list = [None]
-    proxy_list = [p.strip() for p in raw_proxies.split(",") if p.strip()]
+    else:
+        random.shuffle(proxy_list)
 
-    current_proxy = random.choice(proxy_list)
+    # Create a continuous round-robin cycle
+    proxy_cycle = itertools.cycle(proxy_list)
+    current_proxy = next(proxy_cycle)
     
-    # Set a strict timeout so dead proxies fail quickly
-    client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
-    
+    # Set max retries to the exact number of available proxies
+    max_retries = len(proxy_list)
     retries = 0
-    max_retries = 5
+
+    client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
+    display_proxy = current_proxy.split('@')[-1] if current_proxy else "Local_IP"
 
     try:
         while True:
@@ -168,7 +167,6 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
                     scraped_data.extend(new_tweets)
                     log.info(f"page={index}  new={len(new_tweets)}  next={next_link}")
                     
-                    # Small delay to keep connections healthy
                     time.sleep(random.uniform(2, 5))
                     index += 1
                     retries = 0 
@@ -178,34 +176,32 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
                     break
 
                 elif status_code in (429, 403):
-                    log.warning(f"Blocked or Rate Limited ({status_code}). Rotating proxy...")
+                    log.warning(f"Blocked or Rate Limited ({status_code}), current proxy: {display_proxy}. Rotating to next proxy in cycle...")
                     retries += 1
-                    if retries > max_retries:
-                        log.error("Max retries reached. Stopping.")
+                    if retries >= max_retries:
+                        log.error("Exhausted all available proxies. Stopping.")
                         break
                     
-                    # Close the burned client and spin up a new one with a fresh IP
                     client.close()
-                    current_proxy = random.choice(proxy_list)
+                    current_proxy = next(proxy_cycle)
                     client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
-                    time.sleep(1)
+                    time.sleep(2)
 
                 else:
                     log.info(f"Unexpected status {status_code}. Stopping.")
                     break
 
             except Exception as e:
-                log.error(f"Request error: {e}. Rotating proxy...")
+                log.error(f"Request error: {e}, current proxy: {display_proxy}. Rotating to next proxy in cycle...")
                 retries += 1
-                if retries > max_retries:
-                    log.error("Max retries reached. Stopping.")
+                if retries >= max_retries:
+                    log.error("Exhausted all available proxies. Stopping.")
                     break
                 
-                # Treat any connection drop as a burned IP and rotate
                 client.close()
-                current_proxy = random.choice(proxy_list)
+                current_proxy = next(proxy_cycle)
                 client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
-                time.sleep(1)
+                time.sleep(2)
     finally:
         client.close()
 
