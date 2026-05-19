@@ -1,55 +1,28 @@
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, timezone
 
-import numpy as np
 import pandas as pd
 
 from core import config, supabase, log
 from src.scraper import scrap_nitter, scrape_reddit
 from src.upload import upload_raw_tweets, upload_raw_reddit
 
-SCRAPE_YEARS = [2023, 2024, 2025, 2026]
-DAG_BASE_DATE = date(2023, 1, 1)
-MANUAL_BASE_DATE = date(2026, 5, 19)
 
-def resolve_scrape_year(exec_date: str | None) -> int:
-    """Map an execution date (or today) to a scrape year.
+def run_scrape_upload(since: str, until: str) -> int:
+    """Scrape and upload all data within the given window.
 
-    Airflow:  exec_date="2023-01-01" → 2023
-              exec_date="2023-01-02" → 2024  ...
-    Manual:   today (2026-05-19)     → 2023
-              tomorrow (2026-05-20)  → 2024  ...
-
-    The index is clamped so it never goes out of range.
+    Args:
+        since: Window start, e.g. "2026-01-01"
+        until: Window end,   e.g. "2027-01-01"
     """
-    if exec_date:
-        d = datetime.strptime(exec_date, "%Y-%m-%d").date()
-        idx = (d - DAG_BASE_DATE).days
-    else:
-        d = datetime.now(timezone.utc).date()
-        idx = (d - MANUAL_BASE_DATE).days
-
-    idx = max(0, min(idx, len(SCRAPE_YEARS) - 1))
-    year = SCRAPE_YEARS[idx]
-    log.info(f"Resolved scrape year: {year}  (slot index={idx}, source={'airflow' if exec_date else 'manual'})")
-    return year
-
-
-def run_scrape_upload(exec_date: str | None = None) -> int:
-    year = resolve_scrape_year(exec_date)
-
-    # Build a full-year date filter — Twitter syntax: since/until
-    since = f"{year}-01-01"
-    until = f"{year + 1}-01-01"
     date_filter = f" since:{since} until:{until}"
-    log.info(f"Targeting full year window: {since} → {until}")
+    log.info(f"Targeting window: {since} → {until}")
 
     new_tweets = []
     for search in config.scrape_config.get("nitter", []):
         if search.get("query"):
-            dynamic_query = search["query"] + date_filter
             new_tweets.extend(
                 scrap_nitter(
-                    search_query=dynamic_query,
+                    search_query=search["query"] + date_filter,
                     depth=search.get("depth") or -1,
                     time_budget=search.get("time_budget") or -1,
                 )
@@ -95,12 +68,18 @@ def run_scrape_upload(exec_date: str | None = None) -> int:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Scrape a specific year window manually.")
+    parser.add_argument("--since", required=True, help="e.g. '2026-01-01'")
+    parser.add_argument("--until", required=True, help="e.g. '2027-01-01'")
+    args = parser.parse_args()
+
     utc_now = datetime.now(timezone.utc)
     supabase.table("app_config").upsert(
         {"key": "last-updated", "value": utc_now.isoformat()},
         on_conflict="key",
     ).execute()
 
-    # exec_date=None → uses today relative to MANUAL_BASE_DATE
-    total = run_scrape_upload(exec_date=None)
+    total = run_scrape_upload(since=args.since, until=args.until)
     log.info(f"Uploaded {total} raw records in {datetime.now(timezone.utc) - utc_now}")
