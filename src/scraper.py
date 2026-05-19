@@ -5,7 +5,7 @@ import random
 from datetime import datetime, timezone
 from urllib.parse import quote_plus
 import requests
-from core import log, supabase
+from core import log, env
 from typing import Tuple, Optional
 from src.utils.types import ScrapedTweetDict, ScrapedRedditDict
 
@@ -95,6 +95,13 @@ def extract_new_reddit_posts(posts: list) -> list[ScrapedRedditDict]:
     return scraped_posts
 
 
+import os
+import time
+import random
+from datetime import datetime, timezone
+from urllib.parse import quote_plus
+import httpx
+
 def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> list[ScrapedTweetDict]:
     """Scrape tweets from Twitter/X via Nitter.
 
@@ -125,7 +132,22 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
     start_time = time.time()
     index = 1
 
-    with httpx.Client(headers=headers, http2=True, timeout=None) as client:
+    # Fetch and parse the proxy list from the environment
+    raw_proxies = env.get("WEBSHARE_PROXIES", "")
+    if not raw_proxies:
+        log.warning("No proxies found in WEBSHARE_PROXIES env var. Running without proxy.")
+        proxy_list = [None]
+    proxy_list = [p.strip() for p in raw_proxies.split(",") if p.strip()]
+
+    current_proxy = random.choice(proxy_list)
+    
+    # Set a strict timeout so dead proxies fail quickly
+    client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
+    
+    retries = 0
+    max_retries = 5
+
+    try:
         while True:
             if time_budget != -1 and (time.time() - start_time) > time_budget:
                 log.info(f"Time budget of {time_budget}s exceeded. Stopping.")
@@ -145,49 +167,47 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
                     new_tweets, next_link = extract_new_tweets_and_next_link(response.text)
                     scraped_data.extend(new_tweets)
                     log.info(f"page={index}  new={len(new_tweets)}  next={next_link}")
+                    
+                    # Small delay to keep connections healthy
                     time.sleep(random.uniform(2, 5))
                     index += 1
+                    retries = 0 
 
                 elif status_code == 200:
                     log.info(f"Empty response on page {index}. Stopping.")
                     break
 
-                elif status_code == 429:
-                    log.warning(f"Rate limited (429). Headers: {response.headers}")
-                    wait_seconds = None
-
-                    if 'retry-after' in response.headers:
-                        retry_value = response.headers['retry-after']
-                        if retry_value.isdigit():
-                            wait_seconds = int(retry_value)
-                        else:
-                            try:
-                                retry_date = datetime.strptime(retry_value, "%a, %d %b %Y %H:%M:%S %Z").replace(tzinfo=timezone.utc)
-                                wait_seconds = (retry_date - datetime.now(timezone.utc)).total_seconds()
-                            except ValueError:
-                                log.error(f"Could not parse Retry-After: {retry_value!r}")
-                                break
-
-                    if wait_seconds is None or wait_seconds < 0:
-                        log.warning("No valid Retry-After. Stopping.")
+                elif status_code in (429, 403):
+                    log.warning(f"Blocked or Rate Limited ({status_code}). Rotating proxy...")
+                    retries += 1
+                    if retries > max_retries:
+                        log.error("Max retries reached. Stopping.")
                         break
-
-                    if time_budget != -1:
-                        remaining = time_budget - (time.time() - start_time)
-                        if wait_seconds > remaining:
-                            log.warning(f"Wait {wait_seconds}s > remaining budget {remaining:.0f}s. Stopping.")
-                            break
-
-                    log.info(f"Waiting {wait_seconds:.1f}s (server instruction) …")
-                    time.sleep(wait_seconds)
+                    
+                    # Close the burned client and spin up a new one with a fresh IP
+                    client.close()
+                    current_proxy = random.choice(proxy_list)
+                    client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
+                    time.sleep(1)
 
                 else:
                     log.info(f"Unexpected status {status_code}. Stopping.")
                     break
 
             except Exception as e:
-                log.error(f"Request error: {e}")
-                break
+                log.error(f"Request error: {e}. Rotating proxy...")
+                retries += 1
+                if retries > max_retries:
+                    log.error("Max retries reached. Stopping.")
+                    break
+                
+                # Treat any connection drop as a burned IP and rotate
+                client.close()
+                current_proxy = random.choice(proxy_list)
+                client = httpx.Client(headers=headers, http2=True, timeout=25.0, proxy=current_proxy)
+                time.sleep(1)
+    finally:
+        client.close()
 
     log.info(f"Scraped {len(scraped_data)} tweets total.")
     return scraped_data
@@ -229,7 +249,7 @@ def scrape_reddit(search_query: str, subreddit: Optional[str] = None, depth: int
         
         # Add subreddit filter if provided
         if subreddit:
-            params["subreddit"] = subreddit
+            params["subreddit"] = [sub.strip() for sub in subreddit.split(",")]
             
         if last_timestamp:
             params["before"] = last_timestamp

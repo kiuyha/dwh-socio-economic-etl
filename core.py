@@ -14,8 +14,10 @@ basicConfig(
 )
 log: Logger = getLogger(__name__)
 
+env = os.environ
+
 # Initialize Supabase
-supabase = SupabaseClient(url=os.environ.get("SUPABASE_URL", ""), key=os.environ.get("SUPABASE_KEY", ""))
+supabase = SupabaseClient(url=env.get("SUPABASE_URL", ""), key=os.environ.get("SUPABASE_KEY", ""))
 
 # Create the single, shared config instance
-config = Config(supabase=supabase, env=os.environ)
+config = Config(supabase=supabase, env=env)
