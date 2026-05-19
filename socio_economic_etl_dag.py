@@ -62,26 +62,24 @@ def task_scrape(**kwargs):
 
     SCRAPE_YEARS = [2026, 2025, 2024, 2023]
     DAG_BASE_DATE = date(2023, 1, 1)
-    END_BACKFILL_DATE = date(2023, 1, 4)
+
+    # 1. Safely check if this is an explicit manual trigger via UI Configuration JSON
+    dag_run = kwargs.get("dag_run")
+    conf = getattr(dag_run, "conf", {}) or {}
     
-    # Fixed deployment baseline to make manual execution indexing reproducible
-    MANUAL_ANCHOR_DATE = date(2026, 5, 19)
-
-    ds = (kwargs.get("templates_dict") or {}).get("exec_date")
-    d = date.fromisoformat(ds) if ds else MANUAL_ANCHOR_DATE
-
-    if d > END_BACKFILL_DATE:
-        # Calculate difference using the frozen baseline date
-        idx = (d - MANUAL_ANCHOR_DATE).days
-        idx = max(0, min(idx, len(SCRAPE_YEARS) - 1))
-        year = SCRAPE_YEARS[idx]
-        log.info(f"[scrape] Run outside backfill window (Manual Trigger) - ds={ds}, anchor={MANUAL_ANCHOR_DATE}, slot={idx}, targeted year={year}")
+    if conf and "year" in conf:
+        year = int(conf["year"])
+        log.info(f"[scrape] Manual Execution via UI Configuration - Explicitly requested year={year}")
+        
+    # 2. Fall back to automatic scheduled backfill date tracking
     else:
-        # Forward order mapping for the 4-day backfill window
+        ds = (kwargs.get("templates_dict") or {}).get("exec_date")
+        d = date.fromisoformat(ds) if ds else DAG_BASE_DATE
+        
         idx = (d - DAG_BASE_DATE).days
         idx = max(0, min(idx, len(SCRAPE_YEARS) - 1))
         year = SCRAPE_YEARS[idx]
-        log.info(f"[scrape] Run inside backfill window (Scheduled Track) - ds={ds}, slot={idx}, targeted year={year}")
+        log.info(f"[scrape] Scheduled Automated Execution - ds={ds}, slot={idx}, targeted year={year}")
 
     since = f"{year}-01-01"
     until = f"{year + 1}-01-01"
