@@ -1,0 +1,15 @@
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "python.analysis.languageServerMode": "full",
+  "python.analysis.typeCheckingMode": "standard",
+  "[yaml]": {
+    "editor.tabSize": 2
+  },
+  "[yml]": {
+      "editor.tabSize": 2
+  },
+  "[python]": {
+    "editor.tabSize": 4
+  }
+}
