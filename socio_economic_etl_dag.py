@@ -63,17 +63,19 @@ def task_scrape(**kwargs):
     SCRAPE_YEARS = [2026, 2025, 2024, 2023]
     DAG_BASE_DATE = date(2023, 1, 1)
     END_BACKFILL_DATE = date(2023, 1, 4)
+    
+    # Fixed deployment baseline to make manual execution indexing reproducible
+    MANUAL_ANCHOR_DATE = date(2026, 5, 19)
 
     ds = (kwargs.get("templates_dict") or {}).get("exec_date")
-    d = date.fromisoformat(ds) if ds else datetime.now(timezone.utc).date()
+    d = date.fromisoformat(ds) if ds else MANUAL_ANCHOR_DATE
 
     if d > END_BACKFILL_DATE:
-        # Calculate the difference between the execution date and real-time today
-        today = datetime.now(timezone.utc).date()
-        idx = (d - today).days
+        # Calculate difference using the frozen baseline date
+        idx = (d - MANUAL_ANCHOR_DATE).days
         idx = max(0, min(idx, len(SCRAPE_YEARS) - 1))
         year = SCRAPE_YEARS[idx]
-        log.info(f"[scrape] Run outside backfill window (Manual Trigger) - ds={ds}, today={today}, slot={idx}, targeted year={year}")
+        log.info(f"[scrape] Run outside backfill window (Manual Trigger) - ds={ds}, anchor={MANUAL_ANCHOR_DATE}, slot={idx}, targeted year={year}")
     else:
         # Forward order mapping for the 4-day backfill window
         idx = (d - DAG_BASE_DATE).days
