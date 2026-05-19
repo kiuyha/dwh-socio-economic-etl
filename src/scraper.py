@@ -133,6 +133,8 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
         log.warning("No proxies found in WEBSHARE_PROXIES env var. Running without proxy.")
         proxy_list = [None]
     else:
+        safe_proxies = [p.split('@')[-1] for p in proxy_list]
+        log.info(f"Successfully loaded {len(proxy_list)} proxies from environment: {safe_proxies}")
         random.shuffle(proxy_list)
 
     # Create a continuous round-robin cycle
