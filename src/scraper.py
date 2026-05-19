@@ -30,38 +30,36 @@ def get_posted_at(tweet) -> Optional[datetime]:
     time_string = safetly_extract_text(tweet, './/span[contains(@class,"tweet-date")]/a', attribute='title')
     if not time_string:
         return None
-    return datetime.strptime(time_string.replace('·', ''), "%b %d, %Y %I:%M %p %Z")
-
+    try:
+        # Parse the string, then forcefully attach UTC timezone to prevent naive datetime corruption
+        dt = datetime.strptime(time_string.replace('·', ''), "%b %d, %Y %I:%M %p %Z")
+        return dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 def extract_new_tweets_and_next_link(html_content: str) -> Tuple[list[ScrapedTweetDict], Optional[str]]:
     tree = html.fromstring(html_content)
     list_tweets = tree.xpath('.//div[contains(@class, "timeline-item")]')
 
-    scraped_tweets: list[ScrapedTweetDict] = [
-        {
+    scraped_tweets: list[ScrapedTweetDict] = []
+    for tweet in list_tweets:
+        tweet_id = exctract_id_tweet(tweet)
+        posted_at_dt = get_posted_at(tweet)
+        
+        if not tweet_id or not posted_at_dt:
+            continue
+            
+        scraped_tweets.append({
             'id': tweet_id,
             'fullname': safetly_extract_text(tweet, './/a[contains(@class, "fullname")]'),
             'username': safetly_extract_text(tweet, './/a[contains(@class, "username")]'),
             'text_content': safetly_extract_text(tweet, './/div[contains(@class, "tweet-content")]'),
-            'posted_at': (posted_at_dt.isoformat() if (posted_at_dt := get_posted_at(tweet)) else None),
+            'posted_at': posted_at_dt.isoformat(),
             'like_count': int((safetly_extract_text(tweet, './/span[contains(@class, "tweet-stat") and .//span[contains(@class, "icon-heart")]]') or '0').replace(',', '')),
             'comment_count': int((safetly_extract_text(tweet, './/span[contains(@class, "tweet-stat") and .//span[contains(@class, "icon-comment")]]') or '0').replace(',', '')),
             'retweet_count': int((safetly_extract_text(tweet, './/span[contains(@class, "tweet-stat") and .//span[contains(@class, "icon-retweet")]]') or '0').replace(',', '')),
             'quote_count': int((safetly_extract_text(tweet, './/span[contains(@class, "tweet-stat") and .//span[contains(@class, "icon-quote")]]') or '0').replace(',', '')),
-        }
-        for tweet in list_tweets
-        if (tweet_id := exctract_id_tweet(tweet))
-    ]
-
-    scraped_ids = [tweet['id'] for tweet in scraped_tweets if tweet['id']]
-    try:
-        response = supabase.table('raw_tweets').select('id').in_('id', scraped_ids).execute()
-        existing_ids = {item['id'] for item in response.data}
-    except Exception as e:
-        log.error(f"An error occurred while checking Supabase: {e}")
-        existing_ids = set()
-
-    new_tweets = [tweet for tweet in scraped_tweets if tweet['id'] not in existing_ids]
+        })
 
     links = tree.xpath('.//div[contains(@class, "show-more")]/a')
     if links:
@@ -69,17 +67,10 @@ def extract_new_tweets_and_next_link(html_content: str) -> Tuple[list[ScrapedTwe
     else:
         next_link = None
 
-    return new_tweets, next_link
+    return scraped_tweets, next_link
 
 
 def extract_new_reddit_posts(posts: list) -> list[ScrapedRedditDict]:
-    """
-    Maps raw Pushshift/PullPush post dicts to ScrapedRedditDict.
-
-    NOTE: `title` and `body` are stored separately so Postgres can generate
-    `text_content` as  COALESCE(title,'') || ' ' || COALESCE(body,'').
-    We do NOT include `text_content` in the returned dict.
-    """
     base_url = "https://www.reddit.com"
 
     scraped_posts: list[ScrapedRedditDict] = [
@@ -101,15 +92,7 @@ def extract_new_reddit_posts(posts: list) -> list[ScrapedRedditDict]:
         if p.get("id") and p.get("created_utc")
     ]
 
-    scraped_ids = [post['id'] for post in scraped_posts]
-    try:
-        response = supabase.table('raw_reddit').select('id').in_('id', scraped_ids).execute()
-        existing_ids = {item['id'] for item in response.data}
-    except Exception as e:
-        log.error(f"An error occurred while checking Supabase: {e}")
-        existing_ids = set()
-
-    return [post for post in scraped_posts if post['id'] not in existing_ids]
+    return scraped_posts
 
 
 def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> list[ScrapedTweetDict]:
@@ -209,12 +192,12 @@ def scrap_nitter(search_query: str, depth: int = -1, time_budget: int = -1) -> l
     log.info(f"Scraped {len(scraped_data)} tweets total.")
     return scraped_data
 
-
-def scrape_reddit(search_query: str, depth: int = -1, time_budget: int = -1) -> list[ScrapedRedditDict]:
+def scrape_reddit(search_query: str, subreddit: Optional[str] = None, depth: int = -1, time_budget: int = -1) -> list[ScrapedRedditDict]:
     """Scrape Reddit posts via PullPush.
 
     Args:
         search_query: The query to search for.
+        subreddit: Comma-separated list of subreddits (e.g., 'indonesia,investasi').
         depth: Max number of pages to fetch (-1 for unlimited).
         time_budget: Max seconds to run (-1 for unlimited).
     """
@@ -227,7 +210,7 @@ def scrape_reddit(search_query: str, depth: int = -1, time_budget: int = -1) -> 
     if time_budget != -1 and not isinstance(time_budget, int):
         raise TypeError("time_budget must be an integer")
 
-    log.info(f"Scraping Reddit for query: {search_query!r}  depth={depth}  budget={time_budget}s")
+    log.info(f"Scraping Reddit for query: {search_query!r}  subreddit: {subreddit}  depth={depth}  budget={time_budget}s")
 
     scraped_data = []
     last_timestamp = None
@@ -243,6 +226,11 @@ def scrape_reddit(search_query: str, depth: int = -1, time_budget: int = -1) -> 
             break
 
         params = {"q": search_query, "size": 100, "sort": "desc"}
+        
+        # Add subreddit filter if provided
+        if subreddit:
+            params["subreddit"] = subreddit
+            
         if last_timestamp:
             params["before"] = last_timestamp
 

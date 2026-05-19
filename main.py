@@ -27,6 +27,7 @@ def run_scrape() -> tuple[list[dict], list[dict]]:
         if search.get("query")
         for post in scrape_reddit(
             search_query=search["query"],
+            subreddit=search.get("subreddit"),  # Pass the new config parameter
             depth=search.get("depth") or -1,
             time_budget=search.get("time_budget") or -1,
         )

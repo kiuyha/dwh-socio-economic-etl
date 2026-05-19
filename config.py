@@ -23,11 +23,10 @@ class Config:
         Fetches a specific configuration value from the 'app_config' table.
         """
         try:
-            # Use .eq() to filter by key and .single() to get one record
             response = self.supabase.table('app_config').select('value').eq('key', key).single().execute()
 
             if response.data:
-                return response.data[0]
+                return response.data[0]['value']
             else:
                 log.warning(f"App config key '{key}' not found. Using default value.")
                 return default_value
