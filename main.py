@@ -217,7 +217,7 @@ def run_load(platform: str, batch_size: int = 1000):
             date_str = str(row['posted_at'])[:10]
             time_id = time_map.get(date_str)
             
-            channel = 'X_global' if platform == 'twitter' else (row['subreddit'] or 'unknown')
+            channel = 'X_global' if platform == 'twitter' else (f"r/{row['subreddit']}" or 'unknown')
             plat_key = ('X' if platform == 'twitter' else 'Reddit', channel)
             platform_id = plat_map.get(plat_key)
             
