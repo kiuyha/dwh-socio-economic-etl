@@ -198,7 +198,8 @@ def run_load(platform: str, batch_size: int = 1000):
 
         # Map data for Fact Table
         for _, row in df.iterrows():
-            time_id = time_map.get(row['posted_at'][:10])
+            date_str = str(row['posted_at'])[:10]
+            time_id = time_map.get(date_str)
             
             channel = 'X_global' if platform == 'twitter' else (row['subreddit'] or 'unknown')
             plat_key = ('X' if platform == 'twitter' else 'Reddit', channel)
@@ -209,8 +210,31 @@ def run_load(platform: str, batch_size: int = 1000):
             
             topic_id = topic_map.get(row['topic_label'])
             
+            # --- SAFETY CHECKS: Filter out rows missing required Foreign Keys ---
+            if time_id is None:
+                log.warning(f"Skipped {row['id']}: Date {date_str} not found in dim_time.")
+                continue
+                
+            if platform_id is None:
+                log.warning(f"Skipped {row['id']}: Channel '{channel}' not found in dim_platform.")
+                continue
+            
+            # --- CONSTRUCT SOURCE URL ---
+            if platform == 'twitter':
+                username = row.get('username', 'unknown')
+                source_url = f"https://x.com/{username}/status/{row['id']}"
+            else:
+                permalink = str(row.get('permalink', ''))
+                # Prepend domain if reddit permalink is just a path
+                if permalink.startswith('/'):
+                    source_url = f"https://www.reddit.com{permalink}"
+                else:
+                    source_url = permalink
+            
+            # Build Fact Row
             records_to_insert.append({
                 'source_id': row['id'],
+                'source_url': source_url,           # Added here
                 'time_id': time_id,
                 'platform_id': platform_id,
                 'topic_id': topic_id,
