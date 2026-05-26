@@ -217,7 +217,7 @@ class QueryBuilder:
             raw = requests.post(url, headers=headers, json=self._body)
 
         # --- parse ---
-        if raw.status_code in (200, 201):
+        if 200 <= raw.status_code < 300:
             body = raw.json()
             # single() → PostgREST returns a plain dict, not a list
             data = [body] if isinstance(body, dict) else body
