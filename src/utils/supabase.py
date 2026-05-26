@@ -225,6 +225,7 @@ class QueryBuilder:
             return APIResponse(data=data, count=count, status=raw.status_code, _raw=raw)
 
         # Non-success: return empty response so callers can check truthiness
+        raw.raise_for_status()
         return APIResponse(data=[], count=0, status=raw.status_code, _raw=raw)
 
 
