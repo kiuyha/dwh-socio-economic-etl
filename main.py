@@ -155,18 +155,42 @@ def run_load(platform: str, batch_size: int = 1000):
     
     # 1. Fetch dimensions ONCE before the loop to save API calls
     def fetch_dimension_maps():
+        # Fetch platforms
         plat_res = supabase.table("dim_platform").select("platform_id, platform_name, channel").execute()
         plat_map = {(r['platform_name'], r['channel']): r['platform_id'] for r in plat_res.data}
         
+        # Fetch topics
         topic_res = supabase.table("dim_topic").select("topic_id, topic_label").execute()
         topic_map = {r['topic_label']: r['topic_id'] for r in topic_res.data}
 
-        time_res = supabase.table("dim_time").select("time_id, full_date").execute()
-        time_map = {r['full_date']: r['time_id'] for r in time_res.data}
+        # Fetch time (Paginated to bypass the 1,000 row hard limit)
+        time_data = []
+        offset = 0
+        limit = 1000
+        while True:
+            t_res = supabase.table("dim_time").select("time_id, full_date").limit(limit).offset(offset).execute()
+            if not t_res.data:
+                break
+            
+            time_data.extend(t_res.data)
+            
+            # If we received fewer rows than the limit, we've hit the end of the table
+            if len(t_res.data) < limit:
+                break
+                
+            offset += limit
+            
+        time_map = {r['full_date']: r['time_id'] for r in time_data}
         
-        return plat_map, topic_map, time_map
+        # Fetch sentiments
+        sent_res = supabase.table("dim_sentiment").select("sentiment_id, sentiment_label, confidence_bucket").execute()
+        sentiment_map = {(r['sentiment_label'], r['confidence_bucket']): r['sentiment_id'] for r in sent_res.data}
+        
+        return plat_map, topic_map, time_map, sentiment_map
     
-    plat_map, topic_map, time_map = fetch_dimension_maps()
+    # Unpack the new map
+    plat_map, topic_map, time_map, sentiment_map = fetch_dimension_maps()
+
     log.info(f"[{platform}] Dimension maps loaded successfully.")
 
     total_loaded = 0
@@ -188,14 +212,6 @@ def run_load(platform: str, batch_size: int = 1000):
         
         records_to_insert = []
 
-        # Resolve sentiments
-        unique_sentiments = df[['sentiment_label', 'sentiment_score']].drop_duplicates()
-        sentiment_id_map = {}
-        for _, s in unique_sentiments.iterrows():
-            key = (s['sentiment_label'], round(float(s['sentiment_score']), 4))
-            res = supabase.rpc('get_sentiment_id', {'p_label': key[0], 'p_score': key[1]})
-            sentiment_id_map[key] = res.data[0] if res.data else None
-
         # Map data for Fact Table
         for _, row in df.iterrows():
             date_str = str(row['posted_at'])[:10]
@@ -205,12 +221,21 @@ def run_load(platform: str, batch_size: int = 1000):
             plat_key = ('X' if platform == 'twitter' else 'Reddit', channel)
             platform_id = plat_map.get(plat_key)
             
-            sentiment_key = (row['sentiment_label'], round(float(row['sentiment_score']), 4))
-            sentiment_id = sentiment_id_map.get(sentiment_key)
-            
             topic_id = topic_map.get(row['topic_label'])
             
-            # --- SAFETY CHECKS: Filter out rows missing required Foreign Keys ---
+            # --- NEW: Local sentiment bucketing ---
+            score = float(row['sentiment_score'])
+            if score >= 0.80:
+                bucket = 'High'
+            elif score >= 0.50:
+                bucket = 'Medium'
+            else:
+                bucket = 'Low'
+                
+            sentiment_id = sentiment_map.get((row['sentiment_label'], bucket))
+            # --------------------------------------
+
+            # --- SAFETY CHECKS ---
             if time_id is None:
                 log.warning(f"Skipped {row['id']}: Date {date_str} not found in dim_time.")
                 continue
@@ -218,14 +243,13 @@ def run_load(platform: str, batch_size: int = 1000):
             if platform_id is None:
                 log.warning(f"Skipped {row['id']}: Channel '{channel}' not found in dim_platform.")
                 continue
-            
+
             # --- CONSTRUCT SOURCE URL ---
             if platform == 'twitter':
                 username = row.get('username', 'unknown')
                 source_url = f"https://x.com/{username}/status/{row['id']}"
             else:
                 permalink = str(row.get('permalink', ''))
-                # Prepend domain if reddit permalink is just a path
                 if permalink.startswith('/'):
                     source_url = f"https://www.reddit.com{permalink}"
                 else:
@@ -234,7 +258,7 @@ def run_load(platform: str, batch_size: int = 1000):
             # Build Fact Row
             records_to_insert.append({
                 'source_id': row['id'],
-                'source_url': source_url,           # Added here
+                'source_url': source_url,
                 'time_id': time_id,
                 'platform_id': platform_id,
                 'topic_id': topic_id,
@@ -245,7 +269,7 @@ def run_load(platform: str, batch_size: int = 1000):
                 'retweet_count': row['retweet_count'],
                 'upvote_count': row['upvote_count'],
                 'downvote_count': row['downvote_count'],
-                'sentiment_score': float(row['sentiment_score']),
+                'sentiment_score': score,
                 'posted_at': row['posted_at']
             })
 
@@ -274,18 +298,23 @@ def run_load(platform: str, batch_size: int = 1000):
         log.info(f"[{platform}] Load phase complete. {total_loaded} total records processed.")
 
 if __name__ == "__main__":
-    import argparse
+    # import argparse
 
-    parser = argparse.ArgumentParser(description="Scrape a specific year window manually.")
-    parser.add_argument("--since", required=True, help="e.g. '2026-01-01'")
-    parser.add_argument("--until", required=True, help="e.g. '2027-01-01'")
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser(description="Scrape a specific year window manually.")
+    # parser.add_argument("--since", required=True, help="e.g. '2026-01-01'")
+    # parser.add_argument("--until", required=True, help="e.g. '2027-01-01'")
+    # args = parser.parse_args()
 
-    utc_now = datetime.now(timezone.utc)
-    supabase.table("app_config").upsert(
-        {"key": "last-updated", "value": utc_now.isoformat()},
-        on_conflict="key",
-    ).execute()
+    # utc_now = datetime.now(timezone.utc)
+    # supabase.table("app_config").upsert(
+    #     {"key": "last-updated", "value": utc_now.isoformat()},
+    #     on_conflict="key",
+    # ).execute()
 
-    total = run_scrape_upload(since=args.since, until=args.until)
-    log.info(f"Uploaded {total} raw records in {datetime.now(timezone.utc) - utc_now}")
+    # total = run_scrape_upload(since=args.since, until=args.until)
+    # log.info(f"Uploaded {total} raw records in {datetime.now(timezone.utc) - utc_now}")
+
+    # run_transform("twitter")
+    # run_transform("reddit")
+    run_load("twitter")
+    run_load("reddit")
