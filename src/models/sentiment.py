@@ -8,7 +8,7 @@ from src.utils.types import SentimentDict
 # ── konstanta ────────────────────────────────────────────────────
 PRETRAINED = "mdhugol/indonesia-bert-sentiment-classification"
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MODEL_DIR = os.path.join(_BASE_DIR, "models", "topic")
+MODEL_DIR = os.path.join(_BASE_DIR, "models", "sentiment")
 LABEL_INDEX = {
     "LABEL_0": "positive",
     "LABEL_1": "neutral",
