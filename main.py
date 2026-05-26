@@ -103,6 +103,10 @@ def run_transform(platform: str, batch_size: int = 1000):
 
         # Inference
         sentiment_res = pd.DataFrame(predict_sentiment_batch(df['processed_text']))
+        topic_res = topic_res.rename(columns={
+            "label": "sentiment_label", 
+            "confidence": "sentiment_score"
+        })
         
         # Rename topic output columns to match the database schema
         topic_res = pd.DataFrame(predict_topic(df['processed_text']))
