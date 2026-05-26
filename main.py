@@ -75,9 +75,13 @@ def run_transform(platform: str, batch_size: int = 1000):
     from src.models.topic import predict_topic
 
     offset = 0
+    
+    # Standardize RPC platform name
+    rpc_platform = 'tweets' if platform == 'twitter' else 'reddit'
+
     while True:
         response = supabase.rpc('get_unprocessed_raw', {
-            'p_platform': platform, 
+            'p_platform': rpc_platform, 
             'p_limit': batch_size,
             'p_offset': offset
         })
@@ -86,6 +90,12 @@ def run_transform(platform: str, batch_size: int = 1000):
             break
 
         df = pd.DataFrame(response.data)
+        
+        if 'extra' in df.columns:
+            extra_df = pd.json_normalize(df['extra'])
+            df = pd.concat([df.drop(columns=['extra']), extra_df], axis=1)
+
+        df['source_type'] = platform
         log.info(f"Processing {len(df)} records for {platform}")
 
         # Preprocess text
@@ -93,24 +103,44 @@ def run_transform(platform: str, batch_size: int = 1000):
 
         # Inference
         sentiment_res = pd.DataFrame(predict_sentiment_batch(df['processed_text']))
+        
+        # Rename topic output columns to match the database schema
         topic_res = pd.DataFrame(predict_topic(df['processed_text']))
+        topic_res = topic_res.rename(columns={
+            "label": "topic_label", 
+            "category": "topic_category"
+        })
 
         # Align and join results
         df = df.reset_index(drop=True)
         df = pd.concat([df, sentiment_res.reset_index(drop=True), topic_res.reset_index(drop=True)], axis=1)
 
-        columns_to_include = [
+        # Shared columns between both platforms
+        base_columns = [
             'id', 'source_type', 'text_content', 'posted_at',
-            'sentiment_label', 'sentiment_score', 'topic_label', 'topic_category',
-            'comment_count', 'like_count', 'retweet_count', 'quote_count',
-            'subreddit', 'username', 'score', 'upvote_count', 'downvote_count', 'permalink'
+            'sentiment_label', 'sentiment_score', 'topic_label', 'topic_category', 
+            'username'
         ]
+
+        # Check against standard 'twitter' string
+        if platform == 'twitter':
+            columns_to_include = base_columns + [
+                'comment_count', 'like_count', 'retweet_count', 'quote_count'
+            ]
+        elif platform == 'reddit':
+            columns_to_include = base_columns + [
+                'subreddit', 'score', 'upvote_count', 'downvote_count', 'permalink'
+            ]
+        else:
+            raise ValueError(f"Unsupported platform: {platform}")
 
         # Select and convert to records
         records = df[columns_to_include].to_dict(orient='records')
         
+        # Ensure source_type is mapped properly
         for r in records:
-            r['source_type'] = 'twitter' if platform == 'twitter' else 'reddit'
+            r['source_type'] = platform 
+            
         supabase.table("staging_transformed").insert(records).execute()
         
         log.info(f"Staged {len(records)} records to staging_transformed")
