@@ -407,7 +407,8 @@ $$;
 --     Called by Airflow transform task for each platform.
 CREATE OR REPLACE FUNCTION get_unprocessed_raw(
     p_platform  TEXT,           -- 'tweets' | 'reddit'
-    p_limit     INTEGER DEFAULT 1000
+    p_limit     INTEGER DEFAULT 1000,
+    p_offset    INTEGER DEFAULT 0
 )
 RETURNS TABLE (
     id          TEXT,
@@ -432,7 +433,7 @@ BEGIN
         FROM raw_tweets rt
         WHERE rt.is_processed = FALSE
         ORDER BY rt.scraped_at
-        LIMIT p_limit;
+        LIMIT p_limit OFFSET p_offset;
     ELSE
         RETURN QUERY
         SELECT
@@ -450,7 +451,7 @@ BEGIN
         FROM raw_reddit rr
         WHERE rr.is_processed = FALSE
         ORDER BY rr.scraped_at
-        LIMIT p_limit;
+        LIMIT p_limit OFFSET p_offset;
     END IF;
 END;
 $$;

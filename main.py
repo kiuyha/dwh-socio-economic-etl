@@ -74,10 +74,12 @@ def run_transform(platform: str, batch_size: int = 1000):
     from src.models.sentiment import predict_sentiment_batch
     from src.models.topic import predict_topic
 
+    offset = 0
     while True:
         response = supabase.rpc('get_unprocessed_raw', {
             'p_platform': platform, 
-            'p_limit': batch_size
+            'p_limit': batch_size,
+            'p_offset': offset
         })
 
         if not response.data:
@@ -112,6 +114,7 @@ def run_transform(platform: str, batch_size: int = 1000):
         supabase.table("staging_transformed").insert(records).execute()
         
         log.info(f"Staged {len(records)} records to staging_transformed")
+        offset += len(df)
 
 def run_load(platform: str, batch_size: int = 1000):
     response = supabase.table("staging_transformed").select("*").eq("source_type", platform).limit(batch_size).execute()
