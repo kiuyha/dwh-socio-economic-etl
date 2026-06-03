@@ -540,3 +540,76 @@ CREATE TABLE IF NOT EXISTS staging_transformed (
 ALTER TABLE staging_transformed    ENABLE ROW LEVEL SECURITY;
 CREATE POLICY staging_transformed_service_only ON staging_transformed
     USING (auth.role() = 'service_role');
+
+CREATE OR REPLACE FUNCTION compare_schema_performance()
+RETURNS TABLE (
+    test_scenario TEXT,
+    unoptimized_time_ms NUMERIC,
+    optimized_time_ms NUMERIC,
+    speedup TEXT
+) LANGUAGE plpgsql AS $$
+DECLARE
+    plan_text TEXT;
+    plan_json JSON;
+BEGIN
+    -- TEST 1: Aggregation (On-the-fly Joins vs. Materialized View)
+    -- Run Unoptimized
+    EXECUTE 'EXPLAIN (ANALYZE, FORMAT JSON)
+        SELECT dt.year, dt.quarter, dtp.topic_label, COUNT(*)
+        FROM fact_post fp
+        JOIN dim_time dt ON fp.time_id = dt.time_id
+        JOIN dim_topic dtp ON fp.topic_id = dtp.topic_id
+        GROUP BY dt.year, dt.quarter, dtp.topic_label' INTO plan_text;
+    plan_json := plan_text::json;
+    unoptimized_time_ms := (plan_json->0->>'Execution Time')::NUMERIC;
+
+    -- Run Optimized
+    EXECUTE 'EXPLAIN (ANALYZE, FORMAT JSON)
+        SELECT year, quarter, topic_label, post_count
+        FROM mv_topic_volume' INTO plan_text;
+    plan_json := plan_text::json;
+    optimized_time_ms := (plan_json->0->>'Execution Time')::NUMERIC;
+
+    test_scenario := '1. Aggregation (Joins vs Materialized View)';
+    speedup := ROUND(unoptimized_time_ms / GREATEST(optimized_time_ms, 0.001), 2) || 'x faster';
+    RETURN NEXT;
+
+    -- TEST 2: Partitioning (Full Table Scan vs. Partition Pruning)
+    -- Run Unoptimized
+    EXECUTE 'SET LOCAL enable_partition_pruning = off';
+    EXECUTE 'EXPLAIN (ANALYZE, FORMAT JSON)
+        SELECT id FROM raw_tweets WHERE posted_at >= ''2024-05-01'' AND posted_at < ''2024-06-01''' INTO plan_text;
+    plan_json := plan_text::json;
+    unoptimized_time_ms := (plan_json->0->>'Execution Time')::NUMERIC;
+
+    -- Run Optimized
+    EXECUTE 'SET LOCAL enable_partition_pruning = on';
+    EXECUTE 'EXPLAIN (ANALYZE, FORMAT JSON)
+        SELECT id FROM raw_tweets WHERE posted_at >= ''2024-05-01'' AND posted_at < ''2024-06-01''' INTO plan_text;
+    plan_json := plan_text::json;
+    optimized_time_ms := (plan_json->0->>'Execution Time')::NUMERIC;
+
+    test_scenario := '2. Scans (Full Table Scan vs Partition Pruning)';
+    speedup := ROUND(unoptimized_time_ms / GREATEST(optimized_time_ms, 0.001), 2) || 'x faster';
+    RETURN NEXT;
+
+    -- TEST 3: Text Search (Sequential Scan vs. GIN Trigram Index)
+    -- Run Unoptimized
+    EXECUTE 'SET LOCAL enable_indexscan = off; SET LOCAL enable_bitmapscan = off;';
+    EXECUTE 'EXPLAIN (ANALYZE, FORMAT JSON)
+        SELECT id FROM raw_reddit WHERE text_content ILIKE ''%inflasi%''' INTO plan_text;
+    plan_json := plan_text::json;
+    unoptimized_time_ms := (plan_json->0->>'Execution Time')::NUMERIC;
+
+    -- Run Optimized
+    EXECUTE 'SET LOCAL enable_indexscan = on; SET LOCAL enable_bitmapscan = on;';
+    EXECUTE 'EXPLAIN (ANALYZE, FORMAT JSON)
+        SELECT id FROM raw_reddit WHERE text_content ILIKE ''%inflasi%''' INTO plan_text;
+    plan_json := plan_text::json;
+    optimized_time_ms := (plan_json->0->>'Execution Time')::NUMERIC;
+
+    test_scenario := '3. Full Text Search (Seq Scan vs GIN Index)';
+    speedup := ROUND(unoptimized_time_ms / GREATEST(optimized_time_ms, 0.001), 2) || 'x faster';
+    RETURN NEXT;
+END;
+$$;

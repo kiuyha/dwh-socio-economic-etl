@@ -298,23 +298,23 @@ def run_load(platform: str, batch_size: int = 1000):
         log.info(f"[{platform}] Load phase complete. {total_loaded} total records processed.")
 
 if __name__ == "__main__":
-    # import argparse
+    import argparse
 
-    # parser = argparse.ArgumentParser(description="Scrape a specific year window manually.")
-    # parser.add_argument("--since", required=True, help="e.g. '2026-01-01'")
-    # parser.add_argument("--until", required=True, help="e.g. '2027-01-01'")
-    # args = parser.parse_args()
+    parser = argparse.ArgumentParser(description="Scrape a specific year window manually.")
+    parser.add_argument("--since", required=True, help="e.g. '2026-01-01'")
+    parser.add_argument("--until", required=True, help="e.g. '2027-01-01'")
+    args = parser.parse_args()
 
-    # utc_now = datetime.now(timezone.utc)
-    # supabase.table("app_config").upsert(
-    #     {"key": "last-updated", "value": utc_now.isoformat()},
-    #     on_conflict="key",
-    # ).execute()
+    utc_now = datetime.now(timezone.utc)
+    supabase.table("app_config").upsert(
+        {"key": "last-updated", "value": utc_now.isoformat()},
+        on_conflict="key",
+    ).execute()
 
-    # total = run_scrape_upload(since=args.since, until=args.until)
-    # log.info(f"Uploaded {total} raw records in {datetime.now(timezone.utc) - utc_now}")
+    total = run_scrape_upload(since=args.since, until=args.until)
+    log.info(f"Uploaded {total} raw records in {datetime.now(timezone.utc) - utc_now}")
 
-    # run_transform("twitter")
-    # run_transform("reddit")
+    run_transform("twitter")
+    run_transform("reddit")
     run_load("twitter")
     run_load("reddit")
